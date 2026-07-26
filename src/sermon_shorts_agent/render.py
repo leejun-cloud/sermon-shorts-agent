@@ -54,6 +54,42 @@ def load_candidates(path: Path) -> List[Candidate]:
     return out
 
 
+def _candidate_slug(candidate: Candidate) -> str:
+    return f"{candidate.rank:02d}-{sanitize_slug(candidate.title)}"
+
+
+def render_previews(video_path: Path, candidates_path: Path, out_dir: Path, top: int = 3) -> List[Path]:
+    candidates = load_candidates(candidates_path)[:top]
+    ensure_dir(out_dir)
+    ffmpeg = ffmpeg_exe()
+    rendered = []
+    manifest = []
+    for candidate in candidates:
+        slug = _candidate_slug(candidate)
+        audio_path = out_dir / f"{slug}.mp3"
+        cmd = [
+            ffmpeg, '-y', '-ss', str(candidate.start), '-to', str(candidate.end), '-i', str(video_path),
+            '-vn', '-acodec', 'libmp3lame', '-b:a', '128k', str(audio_path)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f'ffmpeg preview failed for {candidate.title}: {result.stderr}')
+        rendered.append(audio_path)
+        manifest.append({
+            'file': audio_path.name,
+            'title': candidate.title,
+            'category': candidate.category,
+            'start': candidate.start,
+            'end': candidate.end,
+            'duration_s': round(candidate.end - candidate.start, 3),
+            'hook': candidate.hook,
+            'summary': candidate.summary,
+            'reasons': candidate.reasons,
+        })
+    write_json(out_dir / 'preview_manifest.json', manifest)
+    return rendered
+
+
 def render_candidates(video_path: Path, candidates_path: Path, out_dir: Path, top: int = 3, burn_subtitles: bool = True) -> List[Path]:
     candidates = load_candidates(candidates_path)[:top]
     ensure_dir(out_dir)
@@ -61,7 +97,7 @@ def render_candidates(video_path: Path, candidates_path: Path, out_dir: Path, to
     ffmpeg = ffmpeg_exe()
     manifest = []
     for candidate in candidates:
-        slug = f"{candidate.rank:02d}-{sanitize_slug(candidate.title)}"
+        slug = _candidate_slug(candidate)
         srt_path = out_dir / f"{slug}.srt"
         mp4_path = out_dir / f"{slug}.mp4"
         make_relative_srt(candidate.segments, candidate.start, srt_path)

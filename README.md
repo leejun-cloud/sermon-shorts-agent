@@ -6,13 +6,16 @@
 
 - `timecode-agent`가 잘하는 것: 전사, 하이라이트, OCR, 장면 신호 생성
 - `sermon-shorts-agent`가 하는 것: 설교용 쇼츠 후보 점수화, 60초 이내 후보 선택, 자막 SRT 생성, 세로형 MP4 렌더링
+- 새 기능: **YouTube 링크 직접 입력**, **타임라인 추천 리포트**, **후보 구간 미리듣기 MP3 생성**
 
 ## 핵심 기능
 
 - `timecode-agent` 워크스페이스(`transcript.json`, `highlights.json`) 직접 읽기
+- **YouTube URL에서 transcript/metadata/video 직접 가져오기**
 - 핵심 메시지 / 적용 / 감정 피크 / 성경구절 언급을 기준으로 후보 점수화
 - 15~60초 길이의 쇼츠 후보 자동 생성
 - 후보별 제목/설명/해시태그 초안 생성
+- **후보 구간 MP3 preview 생성**
 - 세로형(9:16) MP4 + 클립별 SRT 렌더링
 - 데모 영상/데모 전사 자동 생성으로 바로 테스트 가능
 
@@ -31,12 +34,25 @@ pip install -e .
 sermon-shorts demo ./demo-output
 ```
 
-생성물:
-- `demo-output/demo-video.mp4`
-- `demo-output/candidates.json`
-- `demo-output/shorts/*.mp4`
-- `demo-output/shorts/*.srt`
-- `demo-output/report.md`
+## YouTube 링크로 바로 시작
+
+```bash
+sermon-shorts prepare-youtube "https://www.youtube.com/watch?v=VIDEO_ID" --out ./yt-work
+sermon-shorts analyze-workspace ./yt-work --out ./yt-work/analysis
+sermon-shorts preview --video ./yt-work/source.mp4 --candidates ./yt-work/analysis/candidates.json --out ./yt-work/previews --top 3
+```
+
+그 다음 preview MP3를 먼저 들어보고, 마음에 드는 후보만 실제 쇼츠로 렌더링하면 됩니다.
+
+> 참고: YouTube는 클라우드 서버 IP를 자주 막습니다. 이 경우 transcript/download 단계에서 막힐 수 있으니, 로컬 맥/PC에서 실행하거나 쿠키/프록시를 붙이는 방식이 더 안정적입니다.
+
+```bash
+sermon-shorts render \
+  --video ./yt-work/source.mp4 \
+  --candidates ./yt-work/analysis/candidates.json \
+  --out ./yt-work/rendered \
+  --top 2
+```
 
 ## 실제 설교 영상에서 쓰는 순서
 
@@ -53,7 +69,17 @@ va highlights ./workspace
 sermon-shorts analyze-workspace ./workspace --out ./shorts-analysis
 ```
 
-### 3) 쇼츠 렌더링
+### 3) 후보 구간 미리듣기
+
+```bash
+sermon-shorts preview \
+  --video /path/to/sermon.mp4 \
+  --candidates ./shorts-analysis/candidates.json \
+  --out ./shorts-analysis/previews \
+  --top 3
+```
+
+### 4) 실제 쇼츠 렌더링
 
 ```bash
 sermon-shorts render \
@@ -97,6 +123,9 @@ sermon-shorts render \
 
 구현됨:
 - 쇼츠 후보 자동 선별
+- YouTube 링크 입력
+- 후보 타임라인 리포트
+- 후보 MP3 preview 생성
 - 세로형 클립 렌더링
 - 후보별 자막 SRT 생성
 - 업로드용 제목/설명/해시태그 초안 생성

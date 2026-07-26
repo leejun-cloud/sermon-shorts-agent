@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from sermon_shorts_agent.pipeline import analyze
+from sermon_shorts_agent.youtube import extract_video_id
 
 
 class PipelineTests(unittest.TestCase):
@@ -30,6 +31,11 @@ class PipelineTests(unittest.TestCase):
             self.assertIn(top.category, {'message', 'emotion', 'application', 'scripture'})
             self.assertTrue((out / 'candidates.json').exists())
             self.assertTrue((out / 'report.md').exists())
+
+    def test_extract_video_id_from_common_urls(self):
+        self.assertEqual(extract_video_id('https://www.youtube.com/watch?v=jNQXAC9IVRw'), 'jNQXAC9IVRw')
+        self.assertEqual(extract_video_id('https://youtu.be/jNQXAC9IVRw?si=abc'), 'jNQXAC9IVRw')
+        self.assertEqual(extract_video_id('jNQXAC9IVRw'), 'jNQXAC9IVRw')
 
 
 if __name__ == '__main__':

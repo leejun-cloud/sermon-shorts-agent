@@ -2,8 +2,9 @@ import argparse
 from pathlib import Path
 
 from .pipeline import analyze, analyze_workspace
-from .render import render_candidates
+from .render import render_candidates, render_previews
 from .demo import build_demo
+from .youtube import prepare_youtube
 
 
 def main() -> None:
@@ -20,6 +21,18 @@ def main() -> None:
     p_workspace.add_argument('workspace', type=Path)
     p_workspace.add_argument('--out', type=Path, required=True)
     p_workspace.add_argument('--top-n', type=int, default=5)
+
+    p_prepare = sub.add_parser('prepare-youtube', help='Fetch transcript/metadata/video from a YouTube URL')
+    p_prepare.add_argument('url')
+    p_prepare.add_argument('--out', type=Path, required=True)
+    p_prepare.add_argument('--languages', default='ko,en')
+    p_prepare.add_argument('--skip-download', action='store_true')
+
+    p_preview = sub.add_parser('preview', help='Extract MP3 previews for top candidate ranges')
+    p_preview.add_argument('--video', type=Path, required=True)
+    p_preview.add_argument('--candidates', type=Path, required=True)
+    p_preview.add_argument('--out', type=Path, required=True)
+    p_preview.add_argument('--top', type=int, default=3)
 
     p_render = sub.add_parser('render', help='Render vertical shorts from candidates json')
     p_render.add_argument('--video', type=Path, required=True)
@@ -39,6 +52,16 @@ def main() -> None:
     if args.command == 'analyze-workspace':
         candidates = analyze_workspace(args.workspace, args.out, top_n=args.top_n)
         print(f'wrote {len(candidates)} candidates -> {args.out}')
+        return
+    if args.command == 'prepare-youtube':
+        languages = [item.strip() for item in args.languages.split(',') if item.strip()]
+        result = prepare_youtube(args.url, args.out, languages=languages, download=not args.skip_download)
+        print(f"prepared YouTube source -> {result['title']}")
+        print(result)
+        return
+    if args.command == 'preview':
+        rendered = render_previews(args.video, args.candidates, args.out, top=args.top)
+        print(f'rendered {len(rendered)} preview mp3 files -> {args.out}')
         return
     if args.command == 'render':
         rendered = render_candidates(args.video, args.candidates, args.out, top=args.top, burn_subtitles=not args.no_burn_subtitles)

@@ -2,7 +2,7 @@ from pathlib import Path
 import subprocess
 
 from .pipeline import analyze
-from .render import ffmpeg_exe, render_candidates
+from .render import ffmpeg_exe, render_candidates, render_previews
 from .utils import ensure_dir, write_json
 
 
@@ -29,6 +29,7 @@ def build_demo(out_dir: Path) -> Path:
     video_path = out_dir / 'demo-video.mp4'
     _make_demo_video(video_path)
     analyze(transcript_path, highlights_path, out_dir, top_n=4)
+    render_previews(video_path, out_dir / 'candidates.json', out_dir / 'previews', top=2)
     render_candidates(video_path, out_dir / 'candidates.json', out_dir / 'shorts', top=3)
     return out_dir
 
