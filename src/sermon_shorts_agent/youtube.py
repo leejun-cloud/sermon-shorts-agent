@@ -26,7 +26,18 @@ def extract_video_id(value: str) -> str:
     raise ValueError(f"could not extract YouTube video id from: {value}")
 
 
-def fetch_transcript(url_or_id: str, languages: Optional[List[str]] = None) -> List[Dict]:
+def _apply_cookie_options(opts: Dict, cookies_from_browser: Optional[str] = None, cookies_path: Optional[str] = None) -> Dict:
+    opts = dict(opts)
+    browser = str(cookies_from_browser or '').strip()
+    cookie_file = str(cookies_path or '').strip()
+    if browser and browser.lower() != 'none':
+        opts['cookiesfrombrowser'] = (browser,)
+    if cookie_file:
+        opts['cookiefile'] = cookie_file
+    return opts
+
+
+def fetch_transcript(url_or_id: str, languages: Optional[List[str]] = None, *, cookies_from_browser: Optional[str] = None, cookies_path: Optional[str] = None) -> List[Dict]:
     from youtube_transcript_api import YouTubeTranscriptApi
 
     video_id = extract_video_id(url_or_id)
@@ -50,10 +61,15 @@ def fetch_transcript(url_or_id: str, languages: Optional[List[str]] = None) -> L
             return normalized
     except Exception:
         pass
-    return _fetch_transcript_via_ytdlp(url_or_id, languages)
+    return _fetch_transcript_via_ytdlp(
+        url_or_id,
+        languages,
+        cookies_from_browser=cookies_from_browser,
+        cookies_path=cookies_path,
+    )
 
 
-def _fetch_transcript_via_ytdlp(url_or_id: str, languages: List[str]) -> List[Dict]:
+def _fetch_transcript_via_ytdlp(url_or_id: str, languages: List[str], *, cookies_from_browser: Optional[str] = None, cookies_path: Optional[str] = None) -> List[Dict]:
     from yt_dlp import YoutubeDL
 
     with tempfile.TemporaryDirectory() as td:
@@ -62,7 +78,7 @@ def _fetch_transcript_via_ytdlp(url_or_id: str, languages: List[str]) -> List[Di
         langs = []
         for lang in languages:
             langs.extend([lang, f"{lang}.*"])
-        opts = {
+        opts = _apply_cookie_options({
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -71,7 +87,7 @@ def _fetch_transcript_via_ytdlp(url_or_id: str, languages: List[str]) -> List[Di
             "subtitleslangs": langs,
             "subtitlesformat": "vtt",
             "outtmpl": outtmpl,
-        }
+        }, cookies_from_browser=cookies_from_browser, cookies_path=cookies_path)
         with YoutubeDL(opts) as ydl:
             ydl.download([url_or_id])
         vtts = sorted(root.glob("captions*.vtt"))
@@ -129,10 +145,11 @@ def _parse_vtt_ts(value: str) -> float:
     return int(h) * 3600 + int(m) * 60 + float(s)
 
 
-def fetch_metadata(url: str) -> Dict:
+def fetch_metadata(url: str, *, cookies_from_browser: Optional[str] = None, cookies_path: Optional[str] = None) -> Dict:
     from yt_dlp import YoutubeDL
 
-    with YoutubeDL({"quiet": True, "no_warnings": True, "skip_download": True}) as ydl:
+    opts = _apply_cookie_options({"quiet": True, "no_warnings": True, "skip_download": True}, cookies_from_browser=cookies_from_browser, cookies_path=cookies_path)
+    with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return {
         "id": info.get("id"),
@@ -145,12 +162,12 @@ def fetch_metadata(url: str) -> Dict:
     }
 
 
-def download_video(url: str, out_dir: Path) -> Path:
+def download_video(url: str, out_dir: Path, *, cookies_from_browser: Optional[str] = None, cookies_path: Optional[str] = None) -> Path:
     from yt_dlp import YoutubeDL
 
     ensure_dir(out_dir)
     outtmpl = str(out_dir / "source.%(ext)s")
-    opts = {
+    opts = _apply_cookie_options({
         "quiet": True,
         "no_warnings": True,
         "outtmpl": outtmpl,
@@ -158,7 +175,7 @@ def download_video(url: str, out_dir: Path) -> Path:
         "merge_output_format": "mp4",
         "noplaylist": True,
         "restrictfilenames": False,
-    }
+    }, cookies_from_browser=cookies_from_browser, cookies_path=cookies_path)
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         path = Path(ydl.prepare_filename(info))
@@ -174,22 +191,24 @@ def download_video(url: str, out_dir: Path) -> Path:
     return path
 
 
-def prepare_youtube(url: str, out_dir: Path, languages: Optional[List[str]] = None, download: bool = True) -> Dict:
+def prepare_youtube(url: str, out_dir: Path, languages: Optional[List[str]] = None, download: bool = True, *, cookies_from_browser: Optional[str] = None, cookies_path: Optional[str] = None) -> Dict:
     ensure_dir(out_dir)
-    transcript = fetch_transcript(url, languages=languages)
+    transcript = fetch_transcript(url, languages=languages, cookies_from_browser=cookies_from_browser, cookies_path=cookies_path)
     transcript_path = out_dir / "transcript.json"
     write_json(transcript_path, transcript)
-    metadata = fetch_metadata(url)
+    metadata = fetch_metadata(url, cookies_from_browser=cookies_from_browser, cookies_path=cookies_path)
     write_json(out_dir / "youtube_metadata.json", metadata)
     video_path = None
     if download:
-        video_path = download_video(url, out_dir)
+        video_path = download_video(url, out_dir, cookies_from_browser=cookies_from_browser, cookies_path=cookies_path)
     result = {
         "transcript_path": str(transcript_path),
         "metadata_path": str(out_dir / "youtube_metadata.json"),
         "video_path": str(video_path) if video_path else None,
         "title": metadata.get("title"),
         "url": metadata.get("webpage_url") or url,
+        "cookies_from_browser": cookies_from_browser or '',
+        "cookies_path": cookies_path or '',
     }
     write_json(out_dir / "prepare_result.json", result)
     return result

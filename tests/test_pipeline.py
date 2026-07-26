@@ -25,13 +25,20 @@ class PipelineTests(unittest.TestCase):
             transcript_path.write_text(json.dumps(transcript, ensure_ascii=False), encoding='utf-8')
             highlights_path.write_text(json.dumps(highlights, ensure_ascii=False), encoding='utf-8')
             out = root / 'out'
-            candidates = analyze(transcript_path, highlights_path, out, top_n=3)
+            candidates = analyze(
+                transcript_path,
+                highlights_path,
+                out,
+                top_n=3,
+                preferences={'preferred_categories': ['application'], 'must_include_keywords': ['실천']}
+            )
             self.assertGreaterEqual(len(candidates), 1)
             top = candidates[0]
             self.assertLessEqual(top.end - top.start, 59.0)
             self.assertIn(top.category, {'message', 'emotion', 'application', 'scripture'})
             self.assertTrue((out / 'candidates.json').exists())
             self.assertTrue((out / 'report.md').exists())
+            self.assertTrue(any('저자 선호 카테고리와 일치' in reason or '필수 키워드 포함' in reason for reason in top.reasons))
 
     def test_extract_video_id_from_common_urls(self):
         self.assertEqual(extract_video_id('https://www.youtube.com/watch?v=jNQXAC9IVRw'), 'jNQXAC9IVRw')
@@ -42,19 +49,33 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             app = create_app(Path(td))
             client = app.test_client()
-            resp = client.post('/api/demo', json={})
+            prefs = {
+                'preferred_categories': 'message,application',
+                'must_include_keywords': '실천,순종',
+                'author_intent': '짧지만 적용이 살아야 한다',
+                'learning_enabled': True,
+            }
+            save = client.post('/api/preferences', json=prefs)
+            self.assertEqual(save.status_code, 200)
+            resp = client.post('/api/demo', json={'preferences': prefs})
             self.assertEqual(resp.status_code, 200)
             data = resp.get_json()
             self.assertIn('session_id', data)
             self.assertGreaterEqual(len(data['candidates']), 1)
             render = client.post(
                 f"/api/session/{data['session_id']}/render-range",
-                json={'start': 15, 'end': 35, 'title': 'manual-test'}
+                json={'start': 15, 'end': 35, 'title': 'manual-test', 'note': '앞부분을 조금 덜어냄', 'preferences': prefs}
             )
             self.assertEqual(render.status_code, 200)
             render_data = render.get_json()
             self.assertIn('/media/', render_data['video_url'])
             self.assertIn('/media/', render_data['srt_url'])
+            self.assertIn('learning', render_data)
+            prefs_get = client.get('/api/preferences')
+            self.assertEqual(prefs_get.status_code, 200)
+            pref_payload = prefs_get.get_json()
+            self.assertIn('preferences', pref_payload)
+            self.assertGreaterEqual(pref_payload['learning']['total_events'], 1)
 
 
 if __name__ == '__main__':

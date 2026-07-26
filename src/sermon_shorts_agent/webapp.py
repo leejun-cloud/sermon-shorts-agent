@@ -10,13 +10,19 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from .demo import build_demo
 from .models import Segment
-from .pipeline import analyze_workspace
+from .pipeline import analyze, analyze_workspace
+from .preferences import (
+    load_learning_summary,
+    load_preferences,
+    normalize_preferences,
+    save_feedback_event,
+    save_preferences,
+)
 from .render import extract_range
 from .transcript import load_transcript
 from .transcribe import transcribe_video
-from .utils import ensure_dir, format_ts, read_json, write_json
+from .utils import ensure_dir, format_ts, read_json, write_json, write_webvtt
 from .youtube import prepare_youtube
-
 
 HTML = r'''<!doctype html>
 <html lang="ko">
@@ -27,12 +33,12 @@ HTML = r'''<!doctype html>
   <style>
     :root { color-scheme: dark; }
     body { margin:0; font-family: Inter, Pretendard, system-ui, sans-serif; background:#0b1020; color:#eef2ff; }
-    .wrap { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    .wrap { max-width: 1440px; margin: 0 auto; padding: 20px; }
     h1 { margin: 0 0 6px; font-size: 28px; }
     .muted { color:#9fb0d6; }
-    .grid { display:grid; grid-template-columns: 360px 1fr; gap: 18px; margin-top: 18px; }
+    .grid { display:grid; grid-template-columns: 380px 1fr; gap: 18px; margin-top: 18px; }
     .card { background:#121933; border:1px solid #26325f; border-radius:16px; padding:16px; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
-    input, button, textarea { width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #32406f; background:#0c1430; color:#eef2ff; padding:10px 12px; }
+    input, button, textarea, select { width:100%; box-sizing:border-box; border-radius:10px; border:1px solid #32406f; background:#0c1430; color:#eef2ff; padding:10px 12px; }
     button { cursor:pointer; font-weight:600; background:#3858ff; border:none; }
     button.secondary { background:#1b2548; }
     button.ghost { background:transparent; border:1px solid #32406f; }
@@ -52,19 +58,34 @@ HTML = r'''<!doctype html>
     .small { font-size:12px; color:#99abd3; }
     .status { white-space:pre-wrap; min-height:40px; color:#b8c7ec; }
     .links a { color:#9ec3ff; text-decoration:none; margin-right:12px; }
+    .kv { display:grid; grid-template-columns: 120px 1fr; gap:8px; font-size:13px; color:#b9c8eb; }
+    label.check { display:flex; align-items:center; gap:8px; font-size:13px; color:#c7d4f3; }
+    label.check input { width:auto; }
+    textarea { min-height: 74px; resize: vertical; }
     @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
 <div class="wrap">
   <h1>sermon-shorts timeline studio</h1>
-  <div class="muted">유튜브 링크 또는 실제 MP4 파일을 넣으면, 타임라인 + 자막 + 추천 구간 + 수동 구간지정을 한 화면에서 다룹니다.</div>
+  <div class="muted">유튜브 링크 또는 실제 MP4 파일을 넣으면, 타임라인 + 자막 + 추천 구간 + 저자 의도 + 선택 패턴 학습을 한 화면에서 다룹니다.</div>
   <div class="grid">
     <div class="stack">
       <div class="card stack">
         <strong>YouTube 링크</strong>
         <input id="ytUrl" placeholder="https://www.youtube.com/watch?v=..." />
-        <div class="small">A안 기준: 로컬 맥/PC에서 실행할수록 유튜브 차단 문제가 적습니다.</div>
+        <div class="row">
+          <select id="cookiesBrowser">
+            <option value="">브라우저 쿠키 사용 안 함</option>
+            <option value="chrome">Chrome</option>
+            <option value="brave">Brave</option>
+            <option value="edge">Edge</option>
+            <option value="firefox">Firefox</option>
+            <option value="safari">Safari</option>
+          </select>
+          <input id="cookiesPath" placeholder="직접 쿠키 파일 경로(선택)" />
+        </div>
+        <div class="small">A안 기준: 맥북 로컬에서 Chrome/Safari 쿠키를 쓰면 유튜브 차단 회피에 가장 유리합니다.</div>
         <button id="ytAnalyze">유튜브 분석</button>
       </div>
       <div class="card stack">
@@ -75,6 +96,25 @@ HTML = r'''<!doctype html>
           <input id="modelSize" value="tiny" placeholder="tiny / base" />
         </div>
         <button id="uploadAnalyze">MP4 업로드 후 분석</button>
+      </div>
+      <div class="card stack">
+        <strong>저자 의도 / 선택 학습</strong>
+        <input id="preferredCategories" placeholder="선호 카테고리 (예: message,application)" />
+        <input id="mustIncludeKeywords" placeholder="꼭 들어가면 좋은 키워드 (쉼표 구분)" />
+        <input id="avoidKeywords" placeholder="빼고 싶은 키워드 (쉼표 구분)" />
+        <div class="row">
+          <input id="targetDurationSec" type="number" min="10" max="59" value="45" placeholder="선호 길이(초)" />
+          <select id="hookTone">
+            <option value="">훅 톤 미지정</option>
+            <option value="declarative">선언형</option>
+            <option value="warm">부드러운 권면형</option>
+            <option value="urgent">강한 촉구형</option>
+          </select>
+        </div>
+        <textarea id="authorIntent" placeholder="저자의 의도 / 이번 설교에서 꼭 살아야 하는 흐름을 적어주세요."></textarea>
+        <label class="check"><input id="learningEnabled" type="checkbox" checked />선택/수정 패턴을 저장해서 다음 추천에 반영</label>
+        <button id="savePrefs" class="secondary">이 설정 저장</button>
+        <div class="kv" id="learningSummary"></div>
       </div>
       <div class="card stack">
         <strong>빠른 데모</strong>
@@ -92,6 +132,7 @@ HTML = r'''<!doctype html>
           <button class="ghost" id="setEnd">현재 위치 = 끝</button>
         </div>
         <input id="manualTitle" placeholder="예: 핵심메시지-직접선택" />
+        <textarea id="selectionNote" placeholder="왜 이 구간을 택했는지 / 어떤 수정을 했는지 메모"></textarea>
         <button id="renderManual">이 구간으로 쇼츠 만들기</button>
         <div class="links" id="renderLinks"></div>
       </div>
@@ -122,19 +163,53 @@ const video = document.getElementById('video');
 
 function setStatus(text){ document.getElementById('status').textContent = text; }
 function fmt(sec){ sec = Math.max(0, Math.floor(sec || 0)); const h = String(Math.floor(sec/3600)).padStart(2,'0'); const m = String(Math.floor((sec%3600)/60)).padStart(2,'0'); const s = String(sec%60).padStart(2,'0'); return `${h}:${m}:${s}`; }
+async function getJSON(url){ const res = await fetch(url); const data = await res.json(); if(!res.ok) throw new Error(data.error || 'request failed'); return data; }
+async function postJSON(url, body){ const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}); const data = await res.json(); if(!res.ok) throw new Error(data.error || 'request failed'); return data; }
+async function postForm(url, formData){ const res = await fetch(url, {method:'POST', body: formData}); const data = await res.json(); if(!res.ok) throw new Error(data.error || 'request failed'); return data; }
 
-async function postJSON(url, body){
-  const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-  const data = await res.json();
-  if(!res.ok) throw new Error(data.error || 'request failed');
-  return data;
+function collectPrefs(){
+  return {
+    preferred_categories: document.getElementById('preferredCategories').value,
+    must_include_keywords: document.getElementById('mustIncludeKeywords').value,
+    avoid_keywords: document.getElementById('avoidKeywords').value,
+    target_duration_sec: document.getElementById('targetDurationSec').value,
+    hook_tone: document.getElementById('hookTone').value,
+    author_intent: document.getElementById('authorIntent').value,
+    learning_enabled: document.getElementById('learningEnabled').checked,
+    cookies_from_browser: document.getElementById('cookiesBrowser').value,
+    cookies_path: document.getElementById('cookiesPath').value,
+  };
 }
 
-async function postForm(url, formData){
-  const res = await fetch(url, {method:'POST', body: formData});
-  const data = await res.json();
-  if(!res.ok) throw new Error(data.error || 'request failed');
-  return data;
+function applyPrefs(prefs){
+  document.getElementById('preferredCategories').value = (prefs.preferred_categories || []).join(', ');
+  document.getElementById('mustIncludeKeywords').value = (prefs.must_include_keywords || []).join(', ');
+  document.getElementById('avoidKeywords').value = (prefs.avoid_keywords || []).join(', ');
+  document.getElementById('targetDurationSec').value = prefs.target_duration_sec || 45;
+  document.getElementById('hookTone').value = prefs.hook_tone || '';
+  document.getElementById('authorIntent').value = prefs.author_intent || '';
+  document.getElementById('learningEnabled').checked = !!prefs.learning_enabled;
+  document.getElementById('cookiesBrowser').value = prefs.cookies_from_browser || '';
+  document.getElementById('cookiesPath').value = prefs.cookies_path || '';
+}
+
+function renderLearningSummary(summary){
+  const root = document.getElementById('learningSummary');
+  const keywords = (summary.common_note_keywords || []).join(', ') || '-';
+  const cats = (summary.preferred_categories || []).join(', ') || '-';
+  root.innerHTML = `
+    <div>학습된 카테고리</div><div>${cats}</div>
+    <div>평균 시작 보정</div><div>${summary.avg_start_delta || 0}초</div>
+    <div>평균 종료 보정</div><div>${summary.avg_end_delta || 0}초</div>
+    <div>평균 선택 길이</div><div>${summary.avg_selected_duration || 0}초</div>
+    <div>자주 남긴 메모</div><div>${keywords}</div>
+  `;
+}
+
+async function refreshPreferences(){
+  const data = await getJSON('/api/preferences');
+  applyPrefs(data.preferences || {});
+  renderLearningSummary(data.learning || {});
 }
 
 function renderSession(data){
@@ -238,18 +313,6 @@ function selectCandidate(rank){
   video.play();
 }
 
-async function renderCandidate(rank){
-  if(!currentSession) return;
-  setStatus('후보 구간 렌더링 중...');
-  try {
-    const data = await postJSON(`/api/session/${currentSession.session_id}/render-candidate`, {rank});
-    setRenderLinks(data);
-    setStatus('후보 추출 완료');
-  } catch (err) {
-    setStatus('오류: ' + err.message);
-  }
-}
-
 function setRenderLinks(data){
   const root = document.getElementById('renderLinks');
   root.innerHTML = `
@@ -259,13 +322,37 @@ function setRenderLinks(data){
   `;
 }
 
+async function renderCandidate(rank){
+  if(!currentSession) return;
+  setStatus('후보 구간 렌더링 중...');
+  const prefs = collectPrefs();
+  try {
+    const data = await postJSON(`/api/session/${currentSession.session_id}/render-candidate`, {
+      rank,
+      note: document.getElementById('selectionNote').value,
+      preferences: prefs,
+    });
+    setRenderLinks(data);
+    renderLearningSummary(data.learning || {});
+    setStatus('후보 추출 완료');
+  } catch (err) {
+    setStatus('오류: ' + err.message);
+  }
+}
+
 document.getElementById('ytAnalyze').onclick = async () => {
   const url = document.getElementById('ytUrl').value.trim();
   if(!url) return setStatus('유튜브 링크를 넣어주세요.');
-  setStatus('유튜브 분석 중... 로컬에서는 잘 되지만 서버 IP에 따라 차단될 수 있습니다.');
+  setStatus('유튜브 분석 중... 로컬에서는 브라우저 쿠키를 함께 쓰는 쪽이 더 안정적입니다.');
   try {
-    const data = await postJSON('/api/analyze-youtube', {url});
+    const data = await postJSON('/api/analyze-youtube', {
+      url,
+      preferences: collectPrefs(),
+      cookies_from_browser: document.getElementById('cookiesBrowser').value,
+      cookies_path: document.getElementById('cookiesPath').value,
+    });
     renderSession(data);
+    renderLearningSummary(data.learning || {});
     setStatus('유튜브 분석 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -279,10 +366,12 @@ document.getElementById('uploadAnalyze').onclick = async () => {
   form.append('video', file);
   form.append('language', document.getElementById('language').value.trim());
   form.append('model_size', document.getElementById('modelSize').value.trim());
+  form.append('preferences', JSON.stringify(collectPrefs()));
   setStatus('MP4 업로드 및 전사/분석 중... 처음에는 모델 다운로드 때문에 조금 걸릴 수 있습니다.');
   try {
     const data = await postForm('/api/analyze-upload', form);
     renderSession(data);
+    renderLearningSummary(data.learning || {});
     setStatus('MP4 분석 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -292,16 +381,27 @@ document.getElementById('uploadAnalyze').onclick = async () => {
 document.getElementById('loadDemo').onclick = async () => {
   setStatus('데모 세션 생성 중...');
   try {
-    const data = await postJSON('/api/demo', {});
+    const data = await postJSON('/api/demo', {preferences: collectPrefs()});
     renderSession(data);
+    renderLearningSummary(data.learning || {});
     setStatus('데모 로드 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
   }
 };
 
-document.getElementById('setStart').onclick = () => { document.getElementById('manualStart').value = video.currentTime.toFixed(1); };
+document.getElementById('savePrefs').onclick = async () => {
+  try {
+    const data = await postJSON('/api/preferences', collectPrefs());
+    applyPrefs(data.preferences || {});
+    renderLearningSummary(data.learning || {});
+    setStatus('저자 의도 / 쿠키 / 학습 설정 저장 완료');
+  } catch (err) {
+    setStatus('오류: ' + err.message);
+  }
+};
 
+document.getElementById('setStart').onclick = () => { document.getElementById('manualStart').value = video.currentTime.toFixed(1); };
 document.getElementById('setEnd').onclick = () => { document.getElementById('manualEnd').value = video.currentTime.toFixed(1); };
 
 document.getElementById('renderManual').onclick = async () => {
@@ -312,8 +412,16 @@ document.getElementById('renderManual').onclick = async () => {
   if(!(end > start)) return setStatus('끝 시간이 시작 시간보다 커야 합니다.');
   setStatus('선택 구간 렌더링 중...');
   try {
-    const data = await postJSON(`/api/session/${currentSession.session_id}/render-range`, {start, end, title});
+    const data = await postJSON(`/api/session/${currentSession.session_id}/render-range`, {
+      start,
+      end,
+      title,
+      candidate_rank: activeCandidate ? activeCandidate.rank : null,
+      note: document.getElementById('selectionNote').value,
+      preferences: collectPrefs(),
+    });
     setRenderLinks(data);
+    renderLearningSummary(data.learning || {});
     setStatus('수동 구간 추출 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -321,6 +429,7 @@ document.getElementById('renderManual').onclick = async () => {
 };
 
 video.addEventListener('timeupdate', () => highlightTranscript(video.currentTime));
+refreshPreferences().catch(err => setStatus('설정 로드 오류: ' + err.message));
 </script>
 </body>
 </html>'''
@@ -339,6 +448,16 @@ def create_app(data_root: Path) -> Flask:
         root = data_root / session_id
         return send_from_directory(root, filename, as_attachment=False)
 
+    @app.get('/api/preferences')
+    def get_preferences():
+        return jsonify({'preferences': load_preferences(data_root), 'learning': load_learning_summary(data_root)})
+
+    @app.post('/api/preferences')
+    def set_preferences():
+        payload = request.get_json(force=True, silent=True) or {}
+        prefs = save_preferences(data_root, payload)
+        return jsonify({'preferences': prefs, 'learning': load_learning_summary(data_root)})
+
     @app.get('/api/session/<session_id>')
     def session_payload(session_id: str):
         return jsonify(_load_session_payload(data_root, session_id))
@@ -347,6 +466,7 @@ def create_app(data_root: Path) -> Flask:
     def demo():
         session_id = uuid.uuid4().hex[:10]
         root = ensure_dir(data_root / session_id)
+        prefs = _resolve_preferences(data_root, request.get_json(force=True, silent=True) or {})
         build_demo(root)
         _write_manifest(root, {
             'session_id': session_id,
@@ -358,13 +478,17 @@ def create_app(data_root: Path) -> Flask:
             'analysis_dir': '.',
             'youtube_url': None,
         })
-        return jsonify(_load_session_payload(data_root, session_id))
+        analyze(root / 'demo-transcript.json', None, root, top_n=5, preferences=prefs)
+        payload = _load_session_payload(data_root, session_id)
+        payload['learning'] = load_learning_summary(data_root)
+        return jsonify(payload)
 
     @app.post('/api/analyze-upload')
     def analyze_upload():
         file = request.files.get('video')
         if not file or not file.filename:
             return jsonify({'error': 'video file is required'}), 400
+        prefs = _resolve_preferences(data_root, _parse_form_preferences(request.form.get('preferences')))
         session_id = uuid.uuid4().hex[:10]
         root = ensure_dir(data_root / session_id)
         ext = Path(file.filename).suffix or '.mp4'
@@ -375,7 +499,6 @@ def create_app(data_root: Path) -> Flask:
             language = None
         model_size = (request.form.get('model_size') or 'tiny').strip() or 'tiny'
         transcribe_video(video_path, root, model_size=model_size, language=language)
-        analyze_workspace(root, root / 'analysis', top_n=5)
         _write_manifest(root, {
             'session_id': session_id,
             'title': video_path.name,
@@ -386,7 +509,10 @@ def create_app(data_root: Path) -> Flask:
             'analysis_dir': 'analysis',
             'youtube_url': None,
         })
-        return jsonify(_load_session_payload(data_root, session_id))
+        _rebuild_candidates(root, prefs)
+        payload = _load_session_payload(data_root, session_id)
+        payload['learning'] = load_learning_summary(data_root)
+        return jsonify(payload)
 
     @app.post('/api/analyze-youtube')
     def analyze_youtube():
@@ -394,19 +520,25 @@ def create_app(data_root: Path) -> Flask:
         url = (payload.get('url') or '').strip()
         if not url:
             return jsonify({'error': 'url is required'}), 400
+        prefs = _resolve_preferences(data_root, payload.get('preferences') or payload)
         session_id = uuid.uuid4().hex[:10]
         root = ensure_dir(data_root / session_id)
         try:
-            result = prepare_youtube(url, root, languages=['ko', 'en'], download=True)
+            result = prepare_youtube(
+                url,
+                root,
+                languages=['ko', 'en'],
+                download=True,
+                cookies_from_browser=payload.get('cookies_from_browser') or prefs.get('cookies_from_browser'),
+                cookies_path=payload.get('cookies_path') or prefs.get('cookies_path'),
+            )
         except Exception as exc:
             return jsonify({'error': f'YouTube 준비 실패: {exc}'}), 400
         transcript_path = Path(result['transcript_path'])
         if transcript_path.name != 'transcript.json':
             shutil.copy2(transcript_path, root / 'transcript.json')
         segments = load_transcript(root / 'transcript.json')
-        from .utils import write_webvtt
         write_webvtt(root / 'transcript.vtt', segments)
-        analyze_workspace(root, root / 'analysis', top_n=5)
         _write_manifest(root, {
             'session_id': session_id,
             'title': result.get('title') or 'youtube',
@@ -417,18 +549,32 @@ def create_app(data_root: Path) -> Flask:
             'analysis_dir': 'analysis',
             'youtube_url': url,
         })
-        return jsonify(_load_session_payload(data_root, session_id))
+        _rebuild_candidates(root, prefs)
+        response = _load_session_payload(data_root, session_id)
+        response['learning'] = load_learning_summary(data_root)
+        return jsonify(response)
 
     @app.post('/api/session/<session_id>/render-candidate')
     def render_candidate(session_id: str):
         payload = request.get_json(force=True, silent=True) or {}
         rank = int(payload.get('rank', 0))
         data = _load_session_payload(data_root, session_id)
-        candidates = data['candidates']
-        candidate = next((item for item in candidates if item['rank'] == rank), None)
+        candidate = next((item for item in data['candidates'] if item['rank'] == rank), None)
         if not candidate:
             return jsonify({'error': 'candidate not found'}), 404
-        return jsonify(_render_range(data_root, session_id, candidate['start'], candidate['end'], candidate['title']))
+        response = _render_range(data_root, session_id, candidate['start'], candidate['end'], candidate['title'])
+        prefs = _resolve_preferences(data_root, payload.get('preferences') or {})
+        learning = _record_feedback(
+            data_root,
+            session_id,
+            candidate,
+            selected_start=candidate['start'],
+            selected_end=candidate['end'],
+            note=str(payload.get('note') or ''),
+            preferences=prefs,
+        )
+        response['learning'] = learning
+        return jsonify(response)
 
     @app.post('/api/session/<session_id>/render-range')
     def render_range(session_id: str):
@@ -438,9 +584,44 @@ def create_app(data_root: Path) -> Flask:
         title = (payload.get('title') or 'manual-range').strip()
         if end <= start:
             return jsonify({'error': 'end must be greater than start'}), 400
-        return jsonify(_render_range(data_root, session_id, start, end, title))
+        response = _render_range(data_root, session_id, start, end, title)
+        prefs = _resolve_preferences(data_root, payload.get('preferences') or {})
+        data = _load_session_payload(data_root, session_id)
+        rank = payload.get('candidate_rank')
+        candidate = next((item for item in data['candidates'] if item['rank'] == rank), None) if rank else None
+        learning = _record_feedback(
+            data_root,
+            session_id,
+            candidate,
+            selected_start=start,
+            selected_end=end,
+            note=str(payload.get('note') or ''),
+            preferences=prefs,
+        )
+        response['learning'] = learning
+        return jsonify(response)
 
     return app
+
+
+def _parse_form_preferences(raw: str) -> Dict:
+    if not raw:
+        return {}
+    try:
+        import json
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _resolve_preferences(data_root: Path, payload: Dict) -> Dict:
+    merged = load_preferences(data_root)
+    incoming = normalize_preferences(payload)
+    for key, value in incoming.items():
+        merged[key] = value
+    merged['learned'] = load_learning_summary(data_root)
+    return normalize_preferences(merged) | {'learned': load_learning_summary(data_root)}
 
 
 def _manifest_path(root: Path) -> Path:
@@ -476,6 +657,10 @@ def _duration_seconds(segments: List[Segment]) -> float:
     return max((s.end for s in segments), default=0.0)
 
 
+def _rebuild_candidates(root: Path, preferences: Dict) -> None:
+    analyze_workspace(root, root / 'analysis', top_n=5, preferences=preferences)
+
+
 def _render_range(data_root: Path, session_id: str, start: float, end: float, title: str) -> Dict:
     root = data_root / session_id
     manifest = read_json(_manifest_path(root))
@@ -495,6 +680,30 @@ def _render_range(data_root: Path, session_id: str, start: float, end: float, ti
         'duration': result['duration'],
         'title': title,
     }
+
+
+def _record_feedback(data_root: Path, session_id: str, candidate: Dict | None, *, selected_start: float, selected_end: float, note: str, preferences: Dict) -> Dict:
+    if not preferences.get('learning_enabled', True):
+        return load_learning_summary(data_root)
+    event = {
+        'session_id': session_id,
+        'selected': True,
+        'category': candidate.get('category') if candidate else 'manual',
+        'candidate_rank': candidate.get('rank') if candidate else None,
+        'candidate_start': candidate.get('start') if candidate else None,
+        'candidate_end': candidate.get('end') if candidate else None,
+        'selected_start': selected_start,
+        'selected_end': selected_end,
+        'selected_duration': round(selected_end - selected_start, 3),
+        'start_delta': round(selected_start - candidate.get('start'), 3) if candidate else 0.0,
+        'end_delta': round(selected_end - candidate.get('end'), 3) if candidate else 0.0,
+        'note': note,
+        'author_intent': preferences.get('author_intent') or '',
+        'preferred_categories': preferences.get('preferred_categories') or [],
+        'must_include_keywords': preferences.get('must_include_keywords') or [],
+        'avoid_keywords': preferences.get('avoid_keywords') or [],
+    }
+    return save_feedback_event(data_root, event)
 
 
 def main() -> None:

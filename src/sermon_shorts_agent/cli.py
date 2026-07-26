@@ -27,6 +27,8 @@ def main() -> None:
     p_prepare.add_argument('--out', type=Path, required=True)
     p_prepare.add_argument('--languages', default='ko,en')
     p_prepare.add_argument('--skip-download', action='store_true')
+    p_prepare.add_argument('--cookies-from-browser', default='')
+    p_prepare.add_argument('--cookies-path', default='')
 
     p_preview = sub.add_parser('preview', help='Extract MP3 previews for top candidate ranges')
     p_preview.add_argument('--video', type=Path, required=True)
@@ -55,7 +57,14 @@ def main() -> None:
         return
     if args.command == 'prepare-youtube':
         languages = [item.strip() for item in args.languages.split(',') if item.strip()]
-        result = prepare_youtube(args.url, args.out, languages=languages, download=not args.skip_download)
+        result = prepare_youtube(
+            args.url,
+            args.out,
+            languages=languages,
+            download=not args.skip_download,
+            cookies_from_browser=args.cookies_from_browser,
+            cookies_path=args.cookies_path,
+        )
         print(f"prepared YouTube source -> {result['title']}")
         print(result)
         return

@@ -4,13 +4,15 @@ from typing import List
 from .models import Candidate
 from .transcript import load_transcript, load_highlights
 from .scoring import build_candidates
+from .preferences import apply_preferences
 from .utils import ensure_dir, write_json, format_ts
 
 
-def analyze(transcript_path: Path, highlights_path: Path = None, out_dir: Path = None, top_n: int = 5) -> List[Candidate]:
+def analyze(transcript_path: Path, highlights_path: Path = None, out_dir: Path = None, top_n: int = 5, preferences: dict = None) -> List[Candidate]:
     segments = load_transcript(transcript_path)
     highlights = load_highlights(highlights_path) if highlights_path else []
     candidates = build_candidates(segments, highlights, top_n=top_n)
+    candidates = apply_preferences(candidates, preferences)
     if out_dir:
         ensure_dir(out_dir)
         write_json(out_dir / 'candidates.json', [c.to_dict() for c in candidates])
@@ -18,14 +20,14 @@ def analyze(transcript_path: Path, highlights_path: Path = None, out_dir: Path =
     return candidates
 
 
-def analyze_workspace(workspace_dir: Path, out_dir: Path = None, top_n: int = 5) -> List[Candidate]:
+def analyze_workspace(workspace_dir: Path, out_dir: Path = None, top_n: int = 5, preferences: dict = None) -> List[Candidate]:
     transcript = workspace_dir / 'transcript.json'
     if not transcript.exists():
         transcript = workspace_dir / 'transcript.srt'
     if not transcript.exists():
         raise FileNotFoundError(f'transcript not found in workspace: {workspace_dir}')
     highlights = workspace_dir / 'highlights.json'
-    return analyze(transcript, highlights if highlights.exists() else None, out_dir, top_n=top_n)
+    return analyze(transcript, highlights if highlights.exists() else None, out_dir, top_n=top_n, preferences=preferences)
 
 
 def render_report(candidates: List[Candidate]) -> str:
