@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sermon-shorts-agent"
+version = "0.1.0"
+description = "Transcript-first sermon shorts candidate picker and renderer"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{name = "Hermes Agent"}]
+dependencies = [
+  "imageio-ffmpeg>=0.6.0"
+]
+
+[project.scripts]
+sermon-shorts = "sermon_shorts_agent.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

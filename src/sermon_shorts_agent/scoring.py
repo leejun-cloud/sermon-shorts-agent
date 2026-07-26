@@ -1,0 +1,192 @@
+import math
+import re
+from typing import Dict, List, Tuple
+
+from .models import Segment, Highlight, Candidate
+from .utils import sentence_chunks
+
+MESSAGE_KEYWORDS = [
+    '하나님', '예수', '복음', '은혜', '말씀', '믿음', '소망', '사랑', '순종',
+    '회복', '결단', '기도', '부르심', '십자가', '성령'
+]
+EMOTION_KEYWORDS = [
+    '지금', '반드시', '결코', '돌아오', '울', '회개', '두려워', '살리', '일어나',
+    '회복', '강하게', '절대로', '믿으', '붙잡'
+]
+APPLICATION_KEYWORDS = [
+    '오늘', '이번 주', '실천', '적용', '살아내', '행동', '결단', '순종', '시작', '멈추'
+]
+SCRIPTURE_BOOKS = [
+    '창세기', '출애굽기', '레위기', '민수기', '신명기', '여호수아', '사사기', '룻기',
+    '사무엘상', '사무엘하', '열왕기상', '열왕기하', '역대상', '역대하', '에스라', '느헤미야',
+    '에스더', '욥기', '시편', '잠언', '전도서', '아가', '이사야', '예레미야', '에스겔',
+    '다니엘', '호세아', '요엘', '아모스', '오바댜', '요나', '미가', '나훔', '하박국',
+    '스바냐', '학개', '스가랴', '말라기', '마태복음', '마가복음', '누가복음', '요한복음',
+    '사도행전', '로마서', '고린도전서', '고린도후서', '갈라디아서', '에베소서', '빌립보서',
+    '골로새서', '데살로니가전서', '데살로니가후서', '디모데전서', '디모데후서', '디도서',
+    '빌레몬서', '히브리서', '야고보서', '베드로전서', '베드로후서', '요한일서', '요한이서',
+    '요한삼서', '유다서', '요한계시록'
+]
+
+
+def keyword_hits(text: str, keywords: List[str]) -> int:
+    lower = text.lower()
+    return sum(1 for kw in keywords if kw.lower() in lower)
+
+
+def overlaps(a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
+    return max(a_start, b_start) < min(a_end, b_end)
+
+
+def segment_features(segment: Segment, highlights: List[Highlight]) -> Dict[str, float]:
+    text = segment.text.strip()
+    message = keyword_hits(text, MESSAGE_KEYWORDS)
+    emotion = keyword_hits(text, EMOTION_KEYWORDS)
+    application = keyword_hits(text, APPLICATION_KEYWORDS)
+    scripture = 1 if any(book in text for book in SCRIPTURE_BOOKS) else 0
+    exclaim = text.count('!') + text.count('?') * 0.5
+    quoteable = 1 if 10 <= len(text) <= 90 else 0
+    highlight_bonus = 0.0
+    for hl in highlights:
+        if overlaps(segment.start, segment.end, hl.start, hl.end):
+            highlight_bonus = max(highlight_bonus, 2.5 + hl.score / 4.0)
+    score = (
+        message * 1.8 + emotion * 1.6 + application * 1.4 + scripture * 2.0 +
+        exclaim * 0.5 + quoteable * 1.0 + highlight_bonus
+    )
+    return {
+        'message': float(message),
+        'emotion': float(emotion),
+        'application': float(application),
+        'scripture': float(scripture),
+        'exclaim': float(exclaim),
+        'highlight_bonus': float(highlight_bonus),
+        'score': float(score),
+    }
+
+
+def choose_title(text: str, category: str) -> str:
+    sentences = sentence_chunks(text)
+    base = sentences[0] if sentences else text.strip()
+    base = re.sub(r'\s+', ' ', base).strip(' .!')
+    if len(base) > 42:
+        base = base[:39].rstrip() + '...'
+    prefixes = {
+        'message': '핵심메시지',
+        'emotion': '감정피크',
+        'application': '적용포인트',
+        'scripture': '말씀선포',
+    }
+    return f"{prefixes.get(category, '쇼츠')} | {base}"
+
+
+def classify(feature_totals: Dict[str, float]) -> str:
+    keys = ['message', 'emotion', 'application', 'scripture']
+    return max(keys, key=lambda key: feature_totals.get(key, 0.0))
+
+
+def generate_hook(text: str, category: str) -> str:
+    sentences = sentence_chunks(text)
+    first = sentences[0] if sentences else text.strip()
+    if len(first) > 55:
+        first = first[:52].rstrip() + '...'
+    if category == 'emotion' and not first.endswith('!'):
+        return first + '!'
+    return first
+
+
+def summarize(text: str) -> str:
+    sentences = sentence_chunks(text)
+    if not sentences:
+        return text.strip()
+    joined = ' '.join(sentences[:2])
+    return joined[:160].strip()
+
+
+def candidate_hashtags(category: str) -> List[str]:
+    base = ['#설교쇼츠', '#목회자AI', '#교회콘텐츠']
+    extra = {
+        'message': ['#핵심메시지', '#말씀요약'],
+        'emotion': ['#은혜로운말씀', '#감동클립'],
+        'application': ['#말씀적용', '#이번주실천'],
+        'scripture': ['#성경말씀', '#본문묵상'],
+    }
+    return base + extra.get(category, [])
+
+
+def build_candidates(segments: List[Segment], highlights: List[Highlight], max_duration: float = 59.0, min_duration: float = 18.0, top_n: int = 5) -> List[Candidate]:
+    if not segments:
+        return []
+    features = [segment_features(seg, highlights) for seg in segments]
+    seeds = sorted(range(len(segments)), key=lambda idx: features[idx]['score'], reverse=True)
+    used: List[Tuple[float, float]] = []
+    candidates: List[Candidate] = []
+    for idx in seeds:
+        if len(candidates) >= top_n:
+            break
+        if features[idx]['score'] < 2.4:
+            continue
+        left = idx
+        right = idx
+        start = segments[idx].start
+        end = segments[idx].end
+        while left > 0 and (end - segments[left - 1].start) <= max_duration:
+            candidate_text = ' '.join(seg.text for seg in segments[left - 1:right + 1])
+            if len(candidate_text) > 320:
+                break
+            left -= 1
+            start = segments[left].start
+            if (end - start) >= min_duration:
+                break
+        while right + 1 < len(segments) and (segments[right + 1].end - start) <= max_duration:
+            candidate_text = ' '.join(seg.text for seg in segments[left:right + 2])
+            if len(candidate_text) > 420:
+                break
+            right += 1
+            end = segments[right].end
+            if (end - start) >= min_duration and len(candidate_text) >= 80:
+                break
+        if end - start < min_duration:
+            continue
+        if any(max(start, s) < min(end, e) for s, e in used):
+            continue
+        selected = segments[left:right + 1]
+        text = ' '.join(seg.text for seg in selected)
+        totals = {'message': 0.0, 'emotion': 0.0, 'application': 0.0, 'scripture': 0.0}
+        total_score = 0.0
+        reasons = []
+        for j in range(left, right + 1):
+            total_score += features[j]['score']
+            for key in totals:
+                totals[key] += features[j][key]
+            if features[j]['highlight_bonus'] > 0:
+                reasons.append('오디오 피크와 겹침')
+            if features[j]['scripture'] > 0:
+                reasons.append('성경구절/성경책 언급')
+            if features[j]['application'] > 0:
+                reasons.append('적용형 표현 포함')
+        category = classify(totals)
+        if totals['message'] > 0:
+            reasons.append('핵심 메시지 키워드 포함')
+        if totals['emotion'] > 0:
+            reasons.append('감정 강조 어휘 포함')
+        reasons = sorted(dict.fromkeys(reasons))
+        title = choose_title(text, category)
+        hook = generate_hook(text, category)
+        candidate = Candidate(
+            rank=len(candidates) + 1,
+            start=round(start, 3),
+            end=round(end, 3),
+            score=round(total_score, 2),
+            category=category,
+            title=title,
+            summary=summarize(text),
+            hook=hook,
+            transcript=text,
+            reasons=reasons,
+            hashtags=candidate_hashtags(category),
+            segments=selected,
+        )
+        used.append((candidate.start, candidate.end))
+        candidates.append(candidate)
+    return candidates
