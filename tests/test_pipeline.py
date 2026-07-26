@@ -39,6 +39,8 @@ class PipelineTests(unittest.TestCase):
             self.assertTrue((out / 'candidates.json').exists())
             self.assertTrue((out / 'report.md').exists())
             self.assertTrue(any('저자 선호 카테고리와 일치' in reason or '필수 키워드 포함' in reason for reason in top.reasons))
+            self.assertTrue(top.match_summary)
+            self.assertGreaterEqual(len(top.score_breakdown), 1)
 
     def test_extract_video_id_from_common_urls(self):
         self.assertEqual(extract_video_id('https://www.youtube.com/watch?v=jNQXAC9IVRw'), 'jNQXAC9IVRw')
@@ -61,6 +63,8 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             data = resp.get_json()
             self.assertIn('session_id', data)
+            self.assertIn('author_profile', data)
+            self.assertTrue(data['author_profile']['headline'])
             self.assertGreaterEqual(len(data['candidates']), 1)
             render = client.post(
                 f"/api/session/{data['session_id']}/render-range",
@@ -71,10 +75,12 @@ class PipelineTests(unittest.TestCase):
             self.assertIn('/media/', render_data['video_url'])
             self.assertIn('/media/', render_data['srt_url'])
             self.assertIn('learning', render_data)
+            self.assertIn('author_profile', render_data)
             prefs_get = client.get('/api/preferences')
             self.assertEqual(prefs_get.status_code, 200)
             pref_payload = prefs_get.get_json()
             self.assertIn('preferences', pref_payload)
+            self.assertIn('author_profile', pref_payload)
             self.assertGreaterEqual(pref_payload['learning']['total_events'], 1)
 
 

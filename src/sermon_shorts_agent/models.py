@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import List, Dict
 
 
@@ -35,6 +35,9 @@ class Candidate:
     reasons: List[str]
     hashtags: List[str]
     segments: List[Segment]
+    score_breakdown: List[str] = field(default_factory=list)
+    match_summary: str = ''
+    recommendation_notes: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict:
         data = asdict(self)

@@ -12,6 +12,7 @@ from .demo import build_demo
 from .models import Segment
 from .pipeline import analyze, analyze_workspace
 from .preferences import (
+    load_author_profile,
     load_learning_summary,
     load_preferences,
     normalize_preferences,
@@ -115,6 +116,7 @@ HTML = r'''<!doctype html>
         <label class="check"><input id="learningEnabled" type="checkbox" checked />선택/수정 패턴을 저장해서 다음 추천에 반영</label>
         <button id="savePrefs" class="secondary">이 설정 저장</button>
         <div class="kv" id="learningSummary"></div>
+        <div class="small" id="authorProfile"></div>
       </div>
       <div class="card stack">
         <strong>빠른 데모</strong>
@@ -206,10 +208,19 @@ function renderLearningSummary(summary){
   `;
 }
 
+function renderAuthorProfile(profile){
+  const root = document.getElementById('authorProfile');
+  const headline = profile?.headline || '저자 프로필은 선택 로그가 쌓일수록 더 또렷해집니다.';
+  const rules = (profile?.style_rules || []).slice(0, 3).map(item => `• ${item}`).join('<br>');
+  const edits = (profile?.editing_tendencies || []).slice(0, 2).map(item => `• ${item}`).join('<br>');
+  root.innerHTML = `<strong>author profile</strong><br>${headline}${rules ? `<br><br>${rules}` : ''}${edits ? `<br><br>${edits}` : ''}`;
+}
+
 async function refreshPreferences(){
   const data = await getJSON('/api/preferences');
   applyPrefs(data.preferences || {});
   renderLearningSummary(data.learning || {});
+  renderAuthorProfile(data.author_profile || {});
 }
 
 function renderSession(data){
@@ -236,6 +247,7 @@ function renderSession(data){
   renderTimeline(data.candidates, data.duration_seconds || 1);
   renderCandidates(data.candidates);
   renderTranscript(data.transcript);
+  renderAuthorProfile(data.author_profile || {});
   document.getElementById('renderLinks').innerHTML = '';
 }
 
@@ -264,7 +276,10 @@ function renderCandidates(candidates){
       <h3>${c.title}</h3>
       <div><span class="pill">${c.category}</span><span class="pill">score ${c.score}</span></div>
       <p>${c.summary}</p>
+      <div class="small"><strong>${c.match_summary || ''}</strong></div>
       <div class="small">${(c.reasons||[]).join(' · ')}</div>
+      <div class="small">${(c.score_breakdown||[]).join('<br>')}</div>
+      <div class="small">${(c.recommendation_notes||[]).map(item => '• ' + item).join('<br>')}</div>
       <div class="row" style="margin-top:10px;">
         <button data-rank="${c.rank}" class="jumpBtn">여기로 이동</button>
         <button data-rank="${c.rank}" class="clipBtn secondary">이 후보 추출</button>
@@ -334,6 +349,7 @@ async function renderCandidate(rank){
     });
     setRenderLinks(data);
     renderLearningSummary(data.learning || {});
+    renderAuthorProfile(data.author_profile || {});
     setStatus('후보 추출 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -353,6 +369,7 @@ document.getElementById('ytAnalyze').onclick = async () => {
     });
     renderSession(data);
     renderLearningSummary(data.learning || {});
+    renderAuthorProfile(data.author_profile || {});
     setStatus('유튜브 분석 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -372,6 +389,7 @@ document.getElementById('uploadAnalyze').onclick = async () => {
     const data = await postForm('/api/analyze-upload', form);
     renderSession(data);
     renderLearningSummary(data.learning || {});
+    renderAuthorProfile(data.author_profile || {});
     setStatus('MP4 분석 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -384,6 +402,7 @@ document.getElementById('loadDemo').onclick = async () => {
     const data = await postJSON('/api/demo', {preferences: collectPrefs()});
     renderSession(data);
     renderLearningSummary(data.learning || {});
+    renderAuthorProfile(data.author_profile || {});
     setStatus('데모 로드 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -395,6 +414,7 @@ document.getElementById('savePrefs').onclick = async () => {
     const data = await postJSON('/api/preferences', collectPrefs());
     applyPrefs(data.preferences || {});
     renderLearningSummary(data.learning || {});
+    renderAuthorProfile(data.author_profile || {});
     setStatus('저자 의도 / 쿠키 / 학습 설정 저장 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -422,6 +442,7 @@ document.getElementById('renderManual').onclick = async () => {
     });
     setRenderLinks(data);
     renderLearningSummary(data.learning || {});
+    renderAuthorProfile(data.author_profile || {});
     setStatus('수동 구간 추출 완료');
   } catch (err) {
     setStatus('오류: ' + err.message);
@@ -450,13 +471,21 @@ def create_app(data_root: Path) -> Flask:
 
     @app.get('/api/preferences')
     def get_preferences():
-        return jsonify({'preferences': load_preferences(data_root), 'learning': load_learning_summary(data_root)})
+        return jsonify({
+            'preferences': load_preferences(data_root),
+            'learning': load_learning_summary(data_root),
+            'author_profile': load_author_profile(data_root),
+        })
 
     @app.post('/api/preferences')
     def set_preferences():
         payload = request.get_json(force=True, silent=True) or {}
         prefs = save_preferences(data_root, payload)
-        return jsonify({'preferences': prefs, 'learning': load_learning_summary(data_root)})
+        return jsonify({
+            'preferences': prefs,
+            'learning': load_learning_summary(data_root),
+            'author_profile': load_author_profile(data_root),
+        })
 
     @app.get('/api/session/<session_id>')
     def session_payload(session_id: str):
@@ -481,6 +510,7 @@ def create_app(data_root: Path) -> Flask:
         analyze(root / 'demo-transcript.json', None, root, top_n=5, preferences=prefs)
         payload = _load_session_payload(data_root, session_id)
         payload['learning'] = load_learning_summary(data_root)
+        payload['author_profile'] = load_author_profile(data_root)
         return jsonify(payload)
 
     @app.post('/api/analyze-upload')
@@ -512,6 +542,7 @@ def create_app(data_root: Path) -> Flask:
         _rebuild_candidates(root, prefs)
         payload = _load_session_payload(data_root, session_id)
         payload['learning'] = load_learning_summary(data_root)
+        payload['author_profile'] = load_author_profile(data_root)
         return jsonify(payload)
 
     @app.post('/api/analyze-youtube')
@@ -552,6 +583,7 @@ def create_app(data_root: Path) -> Flask:
         _rebuild_candidates(root, prefs)
         response = _load_session_payload(data_root, session_id)
         response['learning'] = load_learning_summary(data_root)
+        response['author_profile'] = load_author_profile(data_root)
         return jsonify(response)
 
     @app.post('/api/session/<session_id>/render-candidate')
@@ -574,6 +606,7 @@ def create_app(data_root: Path) -> Flask:
             preferences=prefs,
         )
         response['learning'] = learning
+        response['author_profile'] = load_author_profile(data_root)
         return jsonify(response)
 
     @app.post('/api/session/<session_id>/render-range')
@@ -599,6 +632,7 @@ def create_app(data_root: Path) -> Flask:
             preferences=prefs,
         )
         response['learning'] = learning
+        response['author_profile'] = load_author_profile(data_root)
         return jsonify(response)
 
     return app
@@ -620,8 +654,11 @@ def _resolve_preferences(data_root: Path, payload: Dict) -> Dict:
     incoming = normalize_preferences(payload)
     for key, value in incoming.items():
         merged[key] = value
-    merged['learned'] = load_learning_summary(data_root)
-    return normalize_preferences(merged) | {'learned': load_learning_summary(data_root)}
+    learning = load_learning_summary(data_root)
+    author_profile = load_author_profile(data_root)
+    merged['learned'] = learning
+    merged['author_profile'] = author_profile
+    return normalize_preferences(merged) | {'learned': learning, 'author_profile': author_profile}
 
 
 def _manifest_path(root: Path) -> Path:
@@ -650,6 +687,7 @@ def _load_session_payload(data_root: Path, session_id: str) -> Dict:
         'duration_label': format_ts(_duration_seconds(transcript)),
         'transcript': [{'start': s.start, 'end': s.end, 'text': s.text} for s in transcript],
         'candidates': candidates,
+        'author_profile': load_author_profile(data_root),
     }
 
 
