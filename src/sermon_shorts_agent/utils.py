@@ -24,6 +24,17 @@ def format_ts(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+def format_vtt_ts(seconds: float) -> str:
+    total_ms = max(0, int(round(seconds * 1000)))
+    ms = total_ms % 1000
+    total_s = total_ms // 1000
+    s = total_s % 60
+    total_m = total_s // 60
+    m = total_m % 60
+    h = total_m // 60
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+
 def sanitize_slug(text: str) -> str:
     text = re.sub(r'[^0-9A-Za-z가-힣]+', '-', text.strip())
     text = re.sub(r'-+', '-', text).strip('-')
@@ -33,3 +44,15 @@ def sanitize_slug(text: str) -> str:
 def sentence_chunks(text: str):
     parts = re.split(r'(?<=[.!?。！？])\s+|\n+', text.strip())
     return [p.strip() for p in parts if p.strip()]
+
+
+def write_webvtt(path: Path, segments) -> None:
+    lines = ['WEBVTT', '']
+    for idx, seg in enumerate(segments, start=1):
+        lines += [
+            str(idx),
+            f"{format_vtt_ts(seg.start)} --> {format_vtt_ts(seg.end)}",
+            seg.text.strip(),
+            ''
+        ]
+    path.write_text('\n'.join(lines), encoding='utf-8')

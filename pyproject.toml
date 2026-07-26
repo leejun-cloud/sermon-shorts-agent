@@ -12,11 +12,14 @@ authors = [{name = "Hermes Agent"}]
 dependencies = [
   "imageio-ffmpeg>=0.6.0",
   "youtube-transcript-api>=0.6.2",
-  "yt-dlp>=2025.8.27"
+  "yt-dlp>=2025.8.27",
+  "Flask>=3.1.0",
+  "faster-whisper>=1.1.1"
 ]
 
 [project.scripts]
 sermon-shorts = "sermon_shorts_agent.cli:main"
+sermon-shorts-web = "sermon_shorts_agent.webapp:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

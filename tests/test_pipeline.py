@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from sermon_shorts_agent.pipeline import analyze
+from sermon_shorts_agent.webapp import create_app
 from sermon_shorts_agent.youtube import extract_video_id
 
 
@@ -36,6 +37,24 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(extract_video_id('https://www.youtube.com/watch?v=jNQXAC9IVRw'), 'jNQXAC9IVRw')
         self.assertEqual(extract_video_id('https://youtu.be/jNQXAC9IVRw?si=abc'), 'jNQXAC9IVRw')
         self.assertEqual(extract_video_id('jNQXAC9IVRw'), 'jNQXAC9IVRw')
+
+    def test_webapp_demo_and_manual_render(self):
+        with tempfile.TemporaryDirectory() as td:
+            app = create_app(Path(td))
+            client = app.test_client()
+            resp = client.post('/api/demo', json={})
+            self.assertEqual(resp.status_code, 200)
+            data = resp.get_json()
+            self.assertIn('session_id', data)
+            self.assertGreaterEqual(len(data['candidates']), 1)
+            render = client.post(
+                f"/api/session/{data['session_id']}/render-range",
+                json={'start': 15, 'end': 35, 'title': 'manual-test'}
+            )
+            self.assertEqual(render.status_code, 200)
+            render_data = render.get_json()
+            self.assertIn('/media/', render_data['video_url'])
+            self.assertIn('/media/', render_data['srt_url'])
 
 
 if __name__ == '__main__':

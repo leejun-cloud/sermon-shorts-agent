@@ -7,14 +7,18 @@ from .utils import sentence_chunks
 
 MESSAGE_KEYWORDS = [
     '하나님', '예수', '복음', '은혜', '말씀', '믿음', '소망', '사랑', '순종',
-    '회복', '결단', '기도', '부르심', '십자가', '성령'
+    '회복', '결단', '기도', '부르심', '십자가', '성령',
+    'god', 'jesus', 'gospel', 'grace', 'word', 'faith', 'hope', 'love', 'obedience',
+    'restore', 'calling', 'prayer', 'truth', 'message'
 ]
 EMOTION_KEYWORDS = [
     '지금', '반드시', '결코', '돌아오', '울', '회개', '두려워', '살리', '일어나',
-    '회복', '강하게', '절대로', '믿으', '붙잡'
+    '회복', '강하게', '절대로', '믿으', '붙잡',
+    'now', 'must', 'never', 'return', 'fear', 'rise', 'hold on', 'courage', 'again'
 ]
 APPLICATION_KEYWORDS = [
-    '오늘', '이번 주', '실천', '적용', '살아내', '행동', '결단', '순종', '시작', '멈추'
+    '오늘', '이번 주', '실천', '적용', '살아내', '행동', '결단', '순종', '시작', '멈추',
+    'today', 'this week', 'practice', 'apply', 'action', 'decision', 'start', 'stop', 'step'
 ]
 SCRIPTURE_BOOKS = [
     '창세기', '출애굽기', '레위기', '민수기', '신명기', '여호수아', '사사기', '룻기',
@@ -25,7 +29,9 @@ SCRIPTURE_BOOKS = [
     '사도행전', '로마서', '고린도전서', '고린도후서', '갈라디아서', '에베소서', '빌립보서',
     '골로새서', '데살로니가전서', '데살로니가후서', '디모데전서', '디모데후서', '디도서',
     '빌레몬서', '히브리서', '야고보서', '베드로전서', '베드로후서', '요한일서', '요한이서',
-    '요한삼서', '유다서', '요한계시록'
+    '요한삼서', '유다서', '요한계시록',
+    'genesis', 'exodus', 'psalm', 'psalms', 'proverbs', 'isaiah', 'matthew', 'mark', 'luke', 'john',
+    'romans', 'corinthians', 'ephesians', 'philippians', 'hebrews', 'james', 'revelation'
 ]
 
 
@@ -117,6 +123,10 @@ def candidate_hashtags(category: str) -> List[str]:
 def build_candidates(segments: List[Segment], highlights: List[Highlight], max_duration: float = 59.0, min_duration: float = 18.0, top_n: int = 5) -> List[Candidate]:
     if not segments:
         return []
+    total_duration = max((seg.end for seg in segments), default=0.0) - min((seg.start for seg in segments), default=0.0)
+    if total_duration and total_duration < min_duration:
+        min_duration = max(4.0, min(total_duration, 10.0))
+        max_duration = max(min_duration + 4.0, min(30.0, total_duration + 4.0))
     features = [segment_features(seg, highlights) for seg in segments]
     seeds = sorted(range(len(segments)), key=lambda idx: features[idx]['score'], reverse=True)
     used: List[Tuple[float, float]] = []
