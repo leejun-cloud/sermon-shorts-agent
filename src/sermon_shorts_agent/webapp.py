@@ -24,6 +24,8 @@ from .transcript import load_transcript
 from .transcribe import transcribe_video
 from .utils import ensure_dir, format_ts, read_json, write_json, write_webvtt
 from .youtube import prepare_youtube
+from .learning import analyze_learning_topic
+from .exporters import export_learning_to_obsidian, export_learning_to_notion
 
 HTML = r'''<!doctype html>
 <html lang="ko">
@@ -585,6 +587,78 @@ def create_app(data_root: Path) -> Flask:
         response['learning'] = load_learning_summary(data_root)
         response['author_profile'] = load_author_profile(data_root)
         return jsonify(response)
+
+
+    @app.post('/api/learning/topic')
+    def analyze_learning_topic_route():
+        payload = request.get_json(force=True, silent=True) or {}
+        topic = (payload.get('topic') or '').strip()
+        if not topic:
+            return jsonify({'error': 'topic is required'}), 400
+        manual_urls = payload.get('urls') or []
+        if isinstance(manual_urls, str):
+            manual_urls = [line.strip() for line in manual_urls.splitlines() if line.strip()]
+        session_id = uuid.uuid4().hex[:10]
+        root = ensure_dir(data_root / session_id)
+        prefs = _resolve_preferences(data_root, payload.get('preferences') or {})
+        search_related = bool(payload.get('search_related', True))
+        limit = int(payload.get('limit') or 5)
+        per_video_top_n = int(payload.get('per_video_top_n') or 3)
+        try:
+            result = analyze_learning_topic(
+                topic,
+                root,
+                manual_urls=manual_urls,
+                search_related=search_related,
+                limit=limit,
+                per_video_top_n=per_video_top_n,
+                preferences=prefs,
+            )
+        except Exception as exc:
+            return jsonify({'error': f'학습 주제 분석 실패: {exc}'}), 400
+        _write_manifest(root, {
+            'session_id': session_id,
+            'title': topic,
+            'source_type': 'learning',
+            'video_file': None,
+            'transcript_file': 'learning_results.json',
+            'transcript_vtt_file': None,
+            'analysis_dir': '.',
+            'youtube_url': None,
+        })
+        response = {
+            'session_id': session_id,
+            'mode': 'learning',
+            'topic': topic,
+            'keywords': result.get('keywords') or [],
+            'videos': result.get('videos') or [],
+            'top_highlights': result.get('top_highlights') or [],
+            'counts': result.get('counts') or {},
+            'report_url': f'/media/{session_id}/learning_report.md',
+            'result_url': f'/media/{session_id}/learning_results.json',
+            'learning': load_learning_summary(data_root),
+            'author_profile': load_author_profile(data_root),
+        }
+        return jsonify(response)
+
+    @app.post('/api/learning/<session_id>/export')
+    def export_learning(session_id: str):
+        payload = request.get_json(force=True, silent=True) or {}
+        root = data_root / session_id
+        result = {}
+        if payload.get('obsidian_path'):
+            try:
+                result['obsidian'] = export_learning_to_obsidian(root, Path(payload['obsidian_path']), subdir=payload.get('obsidian_subdir') or '03_산출물/강의안/유튜브학습')
+            except Exception as exc:
+                result['obsidian'] = {'error': str(exc)}
+        if payload.get('notion_database_id'):
+            try:
+                result['notion'] = export_learning_to_notion(root, payload['notion_database_id'], token=payload.get('notion_token') or None)
+            except Exception as exc:
+                result['notion'] = {'error': str(exc)}
+        if not result:
+            return jsonify({'error': 'obsidian_path or notion_database_id is required'}), 400
+        return jsonify(result)
 
     @app.post('/api/session/<session_id>/render-candidate')
     def render_candidate(session_id: str):

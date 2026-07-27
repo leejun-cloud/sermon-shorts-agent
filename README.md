@@ -237,3 +237,53 @@ sermon-shorts render \
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+
+## YouTube 학습 하이라이트 프로그램
+
+기존 설교 쇼츠 엔진을 그대로 활용해서, **주제 기반 학습용 YouTube 추천 + 하이라이트 추출 + Obsidian/Notion 저장** 흐름도 지원합니다.
+
+### CLI로 주제 학습 세션 만들기
+
+```bash
+sermon-shorts learn-topic   --topic "바이브 코딩"   --url "https://www.youtube.com/watch?v=VIDEO_ID"   --out ./learning-vibe
+```
+
+결과물:
+- `learning_results.json` — 추천 영상 + 하이라이트 구조화 결과
+- `learning_report.md` — 사람이 읽기 좋은 리포트
+- `videos/<id>/transcript.json` — 영상별 전사
+- `videos/<id>/analysis/candidates.json` — 기존 후보 엔진으로 뽑은 핵심 구간
+
+### 서버 API로 주제 학습 세션 만들기
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/learning/topic   -H 'Content-Type: application/json'   -d '{
+    "topic": "바이브 코딩",
+    "urls": ["https://www.youtube.com/watch?v=VIDEO_ID"],
+    "search_related": true,
+    "limit": 5,
+    "per_video_top_n": 3
+  }'
+```
+
+### Obsidian 저장
+
+```bash
+sermon-shorts export-obsidian   --result-root ./learning-vibe   --vault ~/ObsidianVault
+```
+
+### Notion 저장
+
+```bash
+sermon-shorts export-notion   --result-root ./learning-vibe   --database-id YOUR_DATABASE_ID
+```
+
+또는 API로:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/learning/<session_id>/export   -H 'Content-Type: application/json'   -d '{
+    "obsidian_path": "/path/to/vault",
+    "notion_database_id": "YOUR_DATABASE_ID"
+  }'
+```

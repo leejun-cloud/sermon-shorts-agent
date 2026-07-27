@@ -1,9 +1,11 @@
 import argparse
 from pathlib import Path
 
+from .demo import build_demo
+from .exporters import export_learning_to_notion, export_learning_to_obsidian
+from .learning import analyze_learning_topic
 from .pipeline import analyze, analyze_workspace
 from .render import render_candidates, render_previews
-from .demo import build_demo
 from .youtube import prepare_youtube
 
 
@@ -46,6 +48,24 @@ def main() -> None:
     p_demo = sub.add_parser('demo', help='Generate demo transcript/video and run end-to-end')
     p_demo.add_argument('out', type=Path)
 
+    p_learn = sub.add_parser('learn-topic', help='Recommend topic-related YouTube videos and extract learning highlights')
+    p_learn.add_argument('--topic', required=True)
+    p_learn.add_argument('--out', type=Path, required=True)
+    p_learn.add_argument('--url', action='append', default=[])
+    p_learn.add_argument('--limit', type=int, default=5)
+    p_learn.add_argument('--per-video-top-n', type=int, default=3)
+    p_learn.add_argument('--no-search-related', action='store_true')
+
+    p_export_obs = sub.add_parser('export-obsidian', help='Export learning results to an Obsidian vault')
+    p_export_obs.add_argument('--result-root', type=Path, required=True)
+    p_export_obs.add_argument('--vault', type=Path, required=True)
+    p_export_obs.add_argument('--subdir', default='03_산출물/강의안/유튜브학습')
+
+    p_export_notion = sub.add_parser('export-notion', help='Export learning results to a Notion database')
+    p_export_notion.add_argument('--result-root', type=Path, required=True)
+    p_export_notion.add_argument('--database-id', required=True)
+    p_export_notion.add_argument('--token', default='')
+
     args = parser.parse_args()
     if args.command == 'analyze':
         candidates = analyze(args.transcript, args.highlights, args.out, top_n=args.top_n)
@@ -79,6 +99,26 @@ def main() -> None:
     if args.command == 'demo':
         out = build_demo(args.out)
         print(f'demo ready -> {out}')
+        return
+    if args.command == 'learn-topic':
+        result = analyze_learning_topic(
+            args.topic,
+            args.out,
+            manual_urls=args.url,
+            search_related=not args.no_search_related,
+            limit=args.limit,
+            per_video_top_n=args.per_video_top_n,
+        )
+        print(f"learning results ready -> {args.out}")
+        print(f"videos={result['counts']['videos_analyzed']}, highlights={result['counts']['highlights']}")
+        return
+    if args.command == 'export-obsidian':
+        result = export_learning_to_obsidian(args.result_root, args.vault, subdir=args.subdir)
+        print(result)
+        return
+    if args.command == 'export-notion':
+        result = export_learning_to_notion(args.result_root, args.database_id, token=args.token or None)
+        print(result)
         return
 
 
