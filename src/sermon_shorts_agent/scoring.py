@@ -71,9 +71,22 @@ def segment_features(segment: Segment, highlights: List[Highlight]) -> Dict[str,
     }
 
 
+MIN_MEANINGFUL_SENTENCE_LEN = 8
+
+
+def _first_meaningful_sentence(sentences: List[str]) -> str:
+    """후보 구간이 문장 중간(이전 문장의 꼬리)에서 시작할 때, 그 잘린 조각
+    ("합니다.", ">> 아멘.") 대신 뒤따르는 온전한 문장을 제목/훅으로 쓴다."""
+    for sentence in sentences:
+        cleaned = re.sub(r'^>>\s*', '', sentence).strip(' .!?')
+        if len(cleaned) >= MIN_MEANINGFUL_SENTENCE_LEN:
+            return sentence
+    return sentences[0] if sentences else ''
+
+
 def choose_title(text: str, category: str) -> str:
     sentences = sentence_chunks(text)
-    base = sentences[0] if sentences else text.strip()
+    base = _first_meaningful_sentence(sentences) if sentences else text.strip()
     base = re.sub(r'\s+', ' ', base).strip(' .!')
     if len(base) > 42:
         base = base[:39].rstrip() + '...'
@@ -93,7 +106,7 @@ def classify(feature_totals: Dict[str, float]) -> str:
 
 def generate_hook(text: str, category: str) -> str:
     sentences = sentence_chunks(text)
-    first = sentences[0] if sentences else text.strip()
+    first = _first_meaningful_sentence(sentences) if sentences else text.strip()
     if len(first) > 55:
         first = first[:52].rstrip() + '...'
     if category == 'emotion' and not first.endswith('!'):
