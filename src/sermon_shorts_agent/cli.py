@@ -44,9 +44,9 @@ def main() -> None:
     p_render.add_argument('--out', type=Path, required=True)
     p_render.add_argument('--top', type=int, default=3)
     p_render.add_argument('--no-burn-subtitles', action='store_true')
-    p_render.add_argument('--layout', choices=['auto', 'crop', 'letterbox'], default='auto',
-                           help='auto(기본): 원본에 여백이 있으면 letterbox+블러, 없으면 crop. '
-                                'crop: 확대/크롭(기존 방식). letterbox: 원본 무손실+블러 배경, 자막은 여백에.')
+    p_render.add_argument('--layout', choices=['auto', 'crop', 'pad', 'letterbox'], default='auto',
+                           help='auto(기본): 가로 원본이면 검은 레터박스(제목 위·자막 아래), 세로면 crop. '
+                                'pad/letterbox: 원본 무손실 + 검은 밴드. crop: 확대/크롭.')
 
     p_demo = sub.add_parser('demo', help='Generate demo transcript/video and run end-to-end')
     p_demo.add_argument('out', type=Path)

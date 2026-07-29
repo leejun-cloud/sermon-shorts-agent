@@ -133,7 +133,18 @@ def candidate_hashtags(category: str) -> List[str]:
     return base + extra.get(category, [])
 
 
-def build_candidates(segments: List[Segment], highlights: List[Highlight], max_duration: float = 59.0, min_duration: float = 18.0, top_n: int = 5) -> List[Candidate]:
+def _ends_sentence(text: str) -> bool:
+    """세그먼트가 문장을 끝내는지 판단. 이 트랜스크립트(faster-whisper)는 문장 끝에
+    마침표/물음표/느낌표를 붙여주므로 그것을 1차 신호로 쓴다."""
+    t = text.rstrip().rstrip('"”\'')
+    return t.endswith(('.', '!', '?', '…'))
+
+
+# 의미 단락 컷 파라미터: 문장 중간에서 끊지 않고, 필요하면 1분을 넘겨도 문장 끝에서 마무리한다.
+_CHAR_MAX = 1500
+
+
+def build_candidates(segments: List[Segment], highlights: List[Highlight], max_duration: float = 90.0, min_duration: float = 18.0, top_n: int = 5) -> List[Candidate]:
     if not segments:
         return []
     total_duration = max((seg.end for seg in segments), default=0.0) - min((seg.start for seg in segments), default=0.0)
@@ -153,22 +164,35 @@ def build_candidates(segments: List[Segment], highlights: List[Highlight], max_d
         right = idx
         start = segments[idx].start
         end = segments[idx].end
-        while left > 0 and (end - segments[left - 1].start) <= max_duration:
-            candidate_text = ' '.join(seg.text for seg in segments[left - 1:right + 1])
-            if len(candidate_text) > 320:
+        # LEFT: 문장 시작 지점으로 정렬 — 앞 세그먼트가 문장을 끝냈으면 현재가 깔끔한 시작점이다.
+        # (이전에 "합니다. 우리가..." 처럼 앞 문장 꼬리에서 시작하던 문제를 방지)
+        while left > 0:
+            if (end - segments[left - 1].start) > max_duration:
+                break
+            if len(' '.join(seg.text for seg in segments[left - 1:right + 1])) > _CHAR_MAX:
+                break
+            if _ends_sentence(segments[left - 1].text):
                 break
             left -= 1
             start = segments[left].start
-            if (end - start) >= min_duration:
+        # RIGHT: 최소 길이를 채운 뒤 '문장 끝'에서 마무리한다. 문장이 안 끝났으면 계속 확장.
+        last_sentence_end = right if _ends_sentence(segments[right].text) else None
+        while right + 1 < len(segments):
+            if (segments[right + 1].end - start) > max_duration:
                 break
-        while right + 1 < len(segments) and (segments[right + 1].end - start) <= max_duration:
-            candidate_text = ' '.join(seg.text for seg in segments[left:right + 2])
-            if len(candidate_text) > 420:
+            if len(' '.join(seg.text for seg in segments[left:right + 2])) > _CHAR_MAX:
                 break
             right += 1
             end = segments[right].end
-            if (end - start) >= min_duration and len(candidate_text) >= 80:
-                break
+            if _ends_sentence(segments[right].text):
+                last_sentence_end = right
+                if (end - start) >= min_duration:
+                    break
+        # 문장 중간에서 끊긴 경우, 범위 내 마지막 문장 끝으로 되돌려 의미가 완결되게 한다.
+        if (last_sentence_end is not None and last_sentence_end < right
+                and (segments[last_sentence_end].end - start) >= min_duration):
+            right = last_sentence_end
+            end = segments[right].end
         if end - start < min_duration:
             continue
         if any(max(start, s) < min(end, e) for s, e in used):
