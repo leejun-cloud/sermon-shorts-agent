@@ -84,12 +84,80 @@ def _first_meaningful_sentence(sentences: List[str]) -> str:
     return sentences[0] if sentences else ''
 
 
+# 선언·명령형 한국어 종결(제목감이 좋은 문장의 끝). 완결·단정적인 어미를 선호한다.
+_TITLE_ENDINGS = ('니다', '습니다', '입니다', '세요', '십시오', '십시다', '합시다',
+                  '겠죠', '군요', '나요', '까요', '을까', '읍시다', '어야', '야죠')
+_TITLE_STOPWORD_STARTS = ('그러므로', '그런데', '그래서', '그리고', '그래도',
+                          '그러니까', '왜냐하면', '그러면', '그러나', '그때', '그러자')
+_TITLE_IDEAL_MIN, _TITLE_IDEAL_MAX, _TITLE_HARD_MAX = 12, 34, 42
+
+
+def _clean_sentence(sentence: str) -> str:
+    """ASR 화자표시(>>)·중복 공백을 정리한 한 줄 문장."""
+    return re.sub(r'\s+', ' ', sentence.replace('>>', ' ')).strip()
+
+
+def _title_score(sentence: str) -> float:
+    """한 문장이 '제목'으로 얼마나 좋은지 점수. 짧고 완결적이며 핵심 키워드가
+    있는 선언형 문장을 선호한다. 외부 API 없이 결정론적으로 뽑는다."""
+    core = _clean_sentence(sentence).strip(' .!?"\'”’')
+    n = len(core)
+    if n < 6:
+        return -1.0
+    score = 0.0
+    if _TITLE_IDEAL_MIN <= n <= _TITLE_IDEAL_MAX:
+        score += 3.0
+    elif 8 <= n <= _TITLE_HARD_MAX:
+        score += 1.5
+    else:
+        score -= 1.0  # 너무 짧거나 길다
+    msg_hits = keyword_hits(core, MESSAGE_KEYWORDS)
+    emo_hits = keyword_hits(core, EMOTION_KEYWORDS)
+    score += min(msg_hits, 3) * 1.0
+    score += min(emo_hits, 2) * 0.7
+    if msg_hits + emo_hits == 0:
+        score -= 1.0  # 핵심 어휘가 전혀 없으면 제목감이 약하다("그렇지 않습니다" 류)
+    if _clean_sentence(sentence).rstrip('"\'”’').endswith(('.', '!', '?')):
+        score += 1.2  # 완결된 문장
+    if core.endswith(_TITLE_ENDINGS):
+        score += 0.9  # 선언·명령형 종결
+    if core.startswith(_TITLE_STOPWORD_STARTS):
+        score -= 1.2  # 접속사/군말로 시작
+    return score
+
+
+# 제목 맨 앞의 군더더기 부사/디스코스 마커 — 있으면 떼어 제목을 간결하게.
+_TITLE_LEAD_FILLERS = ('근본적으로는', '근본적으로', '사실은', '사실', '결국은', '결국',
+                       '이제는', '이제', '정말로', '진짜로', '한마디로', '어떻게 보면')
+
+
+def _strip_lead_filler(base: str) -> str:
+    for filler in _TITLE_LEAD_FILLERS:
+        if base.startswith(filler + ' '):
+            return base[len(filler):].strip()
+    return base
+
+
+def _shorten_title(base: str, limit: int = _TITLE_HARD_MAX) -> str:
+    """한도를 넘으면 단어 경계에서 잘라 말줄임(…). 단어 중간을 자르지 않는다."""
+    if len(base) <= limit:
+        return base
+    cut = base[:limit]
+    if ' ' in cut[limit // 2:]:  # 뒤쪽에 공백이 있으면 거기서 자른다
+        cut = cut[:cut.rfind(' ')]
+    return cut.rstrip(' ,·') + '…'
+
+
 def choose_title(text: str, category: str) -> str:
     sentences = sentence_chunks(text)
-    base = _first_meaningful_sentence(sentences) if sentences else text.strip()
-    base = re.sub(r'\s+', ' ', base).strip(' .!')
-    if len(base) > 42:
-        base = base[:39].rstrip() + '...'
+    if not sentences:
+        base = text.strip()
+    else:
+        best = max(sentences, key=_title_score)
+        if _title_score(best) <= 0:  # 쓸 만한 문장이 없으면 첫 의미 문장으로 폴백
+            best = _first_meaningful_sentence(sentences)
+        base = _clean_sentence(best).strip(' .!?"\'”’')
+    base = _shorten_title(_strip_lead_filler(base))
     prefixes = {
         'message': '핵심메시지',
         'emotion': '감정피크',
